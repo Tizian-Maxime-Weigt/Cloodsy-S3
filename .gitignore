@@ -5,6 +5,9 @@ build_test/
 # Runtime data (db + storage)
 .cloodsys3/
 
+# IDE
+.idea/
+
 # OS
 .DS_Store
 Thumbs.db

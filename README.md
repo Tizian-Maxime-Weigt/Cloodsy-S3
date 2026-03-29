@@ -1,6 +1,21 @@
+<div align="center">
+
 # Cloodsy S3
 
-A lightweight, AWS SDK-compatible S3 server written in Go. Ships as a single binary with zero dependencies — no CGO, no external database, no runtime requirements. All metadata is stored in an embedded SQLite database.
+**A lightweight, AWS SDK-compatible S3 server written in Go.**
+
+Ships as a single binary with zero dependencies — no CGO, no external database, no runtime requirements.
+All metadata is stored in an embedded SQLite database.
+
+[![Built by OnaOnbir](https://img.shields.io/badge/Built%20by-OnaOnbir-blue?style=flat-square)](https://onaonbir.com)
+[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
+[![Release](https://img.shields.io/github/v/release/onaonbir/Cloodsy-S3?style=flat-square)](https://github.com/onaonbir/Cloodsy-S3/releases/latest)
+
+[Website](https://onaonbir.com) | [Download](https://github.com/onaonbir/Cloodsy-S3/releases/latest) | [Documentation](#quick-start)
+
+</div>
+
+---
 
 ## Features
 
@@ -636,3 +651,13 @@ make version          # Print current version
 ## License
 
 See [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+
+**Cloodsy S3** is built and maintained by **[OnaOnbir](https://onaonbir.com)**
+
+[onaonbir.com](https://onaonbir.com)
+
+</div>

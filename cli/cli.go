@@ -625,7 +625,7 @@ func RunAdminCreate(database *db.DB, username, customPassword string) error {
 		}
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
@@ -698,7 +698,7 @@ func RunAdminPassword(database *db.DB, username, customPassword string) error {
 		}
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}

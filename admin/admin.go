@@ -16,11 +16,21 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const sessionTTL = 24 * time.Hour
+const sessionTTL = 8 * time.Hour
+
+const (
+	maxLoginAttempts  = 5
+	loginLockDuration = 15 * time.Minute
+)
 
 type session struct {
 	Username  string
 	ExpiresAt time.Time
+}
+
+type loginAttempt struct {
+	Count    int
+	LockedAt time.Time
 }
 
 type Handler struct {
@@ -32,6 +42,9 @@ type Handler struct {
 
 	mu       sync.RWMutex
 	sessions map[string]session // token -> session
+
+	loginMu   sync.Mutex
+	loginRate map[string]*loginAttempt // IP -> attempt
 }
 
 func New(database *db.DB, store *storage.FileSystem, cfg *config.Config, logger *slog.Logger) *Handler {
@@ -40,9 +53,18 @@ func New(database *db.DB, store *storage.FileSystem, cfg *config.Config, logger 
 		Storage:  store,
 		Config:   cfg,
 		Logger:   logger,
-		sessions: make(map[string]session),
+		sessions:  make(map[string]session),
+		loginRate: make(map[string]*loginAttempt),
 	}
-	// Clean expired sessions every hour
+	// Warn about wildcard CORS in admin API
+	for _, o := range cfg.Admin.CORSOrigins {
+		if o == "*" {
+			logger.Warn("Admin API CORS allows all origins ('*'). Consider restricting to specific origins in production.")
+			break
+		}
+	}
+
+	// Clean expired sessions and login attempts every hour
 	go h.sessionCleaner()
 	return h
 }
@@ -51,15 +73,72 @@ func (h *Handler) sessionCleaner() {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 	for range ticker.C {
-		h.mu.Lock()
 		now := time.Now()
+		h.mu.Lock()
 		for token, s := range h.sessions {
 			if now.After(s.ExpiresAt) {
 				delete(h.sessions, token)
 			}
 		}
 		h.mu.Unlock()
+
+		h.loginMu.Lock()
+		for ip, a := range h.loginRate {
+			if !a.LockedAt.IsZero() && now.After(a.LockedAt.Add(loginLockDuration)) {
+				delete(h.loginRate, ip)
+			} else if a.Count == 0 {
+				delete(h.loginRate, ip)
+			}
+		}
+		h.loginMu.Unlock()
 	}
+}
+
+func (h *Handler) checkLoginRate(ip string) bool {
+	h.loginMu.Lock()
+	defer h.loginMu.Unlock()
+	a, ok := h.loginRate[ip]
+	if !ok {
+		return true
+	}
+	if !a.LockedAt.IsZero() && time.Now().Before(a.LockedAt.Add(loginLockDuration)) {
+		return false // still locked
+	}
+	if !a.LockedAt.IsZero() {
+		// lock expired, reset
+		a.Count = 0
+		a.LockedAt = time.Time{}
+	}
+	return true
+}
+
+func (h *Handler) recordLoginFailure(ip string) {
+	h.loginMu.Lock()
+	defer h.loginMu.Unlock()
+	a, ok := h.loginRate[ip]
+	if !ok {
+		a = &loginAttempt{}
+		h.loginRate[ip] = a
+	}
+	a.Count++
+	if a.Count >= maxLoginAttempts {
+		a.LockedAt = time.Now()
+	}
+}
+
+func (h *Handler) resetLoginAttempts(ip string) {
+	h.loginMu.Lock()
+	defer h.loginMu.Unlock()
+	delete(h.loginRate, ip)
+}
+
+func clientIP(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		parts := strings.SplitN(fwd, ",", 2)
+		return strings.TrimSpace(parts[0])
+	}
+	host, _, _ := strings.Cut(r.RemoteAddr, ":")
+	return host
 }
 
 func generateToken() (string, error) {
@@ -258,6 +337,17 @@ func extractToken(r *http.Request) string {
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+
+	// Rate limit check
+	if !h.checkLoginRate(ip) {
+		h.Logger.Warn("login rate limited", "ip", ip)
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{
+			"error": "too many login attempts, try again later",
+		})
+		return
+	}
+
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -279,14 +369,20 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if admin == nil {
+		h.recordLoginFailure(ip)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)); err != nil {
+		h.recordLoginFailure(ip)
+		h.Logger.Warn("failed login attempt", "username", req.Username, "ip", ip)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
+
+	// Success — reset attempts
+	h.resetLoginAttempts(ip)
 
 	token, expiresAt, err := h.createSession(req.Username)
 	if err != nil {
@@ -295,7 +391,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Logger.Info("admin login", "username", req.Username)
+	h.Logger.Info("admin login", "username", req.Username, "ip", ip)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"token":      token,
 		"username":   req.Username,

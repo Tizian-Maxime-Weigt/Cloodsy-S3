@@ -78,7 +78,7 @@ func (h *Handler) handleCreateCredential(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	h.Logger.Info("credential created via admin API", "bucket", bucketName, "name", req.Name, "access_key", accessKey)
+	h.Logger.Info("credential created via admin API", "bucket", bucketName, "name", req.Name, "access_key", accessKey[:6]+"***")
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"bucket":     bucketName,
 		"name":       req.Name,
@@ -106,6 +106,6 @@ func (h *Handler) handleDeleteCredential(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	h.Logger.Info("credential deleted via admin API", "access_key", accessKey)
+	h.Logger.Info("credential deleted via admin API", "access_key", accessKey[:6]+"***")
 	writeJSON(w, http.StatusOK, map[string]string{"message": "credential deleted"})
 }

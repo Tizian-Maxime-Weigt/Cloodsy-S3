@@ -21,9 +21,10 @@ type AdminConfig struct {
 }
 
 type ServerConfig struct {
-	Listen string    `yaml:"listen"`
-	Region string    `yaml:"region"`
-	TLS    TLSConfig `yaml:"tls"`
+	Listen      string   `yaml:"listen"`
+	Region      string   `yaml:"region"`
+	TLS         TLSConfig `yaml:"tls"`
+	CORSOrigins []string `yaml:"cors_origins"`
 }
 
 type TLSConfig struct {

@@ -73,12 +73,11 @@ func Run(cfg *config.Config, h *handler.Handler, logger *slog.Logger) error {
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	logger.Info("starting Cloodsy S3", "version", Version, "commit", CommitHash, "listen", cfg.Server.Listen, "region", cfg.Server.Region)
+	logger.Info("S3 server listening on " + cfg.Server.Listen)
 
 	if cfg.Server.TLS.Enabled {
 		return srv.ListenAndServeTLS(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
 	}
-	logger.Warn("TLS is disabled - connections are not encrypted")
 	return srv.ListenAndServe()
 }
 

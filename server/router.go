@@ -74,12 +74,9 @@ func (sr *s3Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		logQuery = maskPresignedQuery(logQuery)
 	}
 
-	sr.logger.Info("request",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"query", logQuery,
+	sr.logger.Info(r.Method+" "+r.URL.Path,
 		"remote", r.RemoteAddr,
-		"requestId", requestID,
+		"query", logQuery,
 	)
 
 	// Normalize path to prevent double-slash and traversal confusion

@@ -9,10 +9,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/onaonbir/Cloodsy-S3/auth"
 	"github.com/onaonbir/Cloodsy-S3/db"
+	"github.com/pterm/pterm"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -51,10 +51,10 @@ func RunBucketCreate(database *db.DB, name, storageRoot, customStorageDir string
 		return fmt.Errorf("create storage dir: %w", err)
 	}
 
+	pterm.Success.Printfln("Bucket '%s' created (id=%d)", bucket.Name, bucket.ID)
+	pterm.Info.Printfln("Storage: %s/", storagePath)
 	if customStorageDir != "" {
-		fmt.Printf("Bucket '%s' created (id=%d). Storage: %s/ (custom)\n", bucket.Name, bucket.ID, storagePath)
-	} else {
-		fmt.Printf("Bucket '%s' created (id=%d). Storage: %s/\n", bucket.Name, bucket.ID, storagePath)
+		pterm.Info.Printfln("Custom storage directory")
 	}
 	return nil
 }
@@ -66,16 +66,17 @@ func RunBucketList(database *db.DB) error {
 	}
 
 	if len(buckets) == 0 {
-		fmt.Println("No buckets found.")
+		pterm.Warning.Println("No buckets found.")
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tCREATED")
+	tableData := pterm.TableData{{"ID", "NAME", "CREATED"}}
 	for _, b := range buckets {
-		fmt.Fprintf(tw, "%d\t%s\t%s\n", b.ID, b.Name, b.CreatedAt.Format("2006-01-02 15:04:05"))
+		tableData = append(tableData, []string{
+			fmt.Sprintf("%d", b.ID), b.Name, b.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
 	}
-	tw.Flush()
+	pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
 	return nil
 }
 
@@ -112,7 +113,7 @@ func RunBucketDelete(database *db.DB, name, storageRoot string) error {
 	storagePath := filepath.Join(base, name)
 	os.RemoveAll(storagePath)
 
-	fmt.Printf("Bucket '%s' deleted.\n", name)
+	pterm.Success.Printfln("Bucket '%s' deleted.", name)
 	return nil
 }
 
@@ -177,14 +178,14 @@ func RunBucketStorageDir(database *db.DB, name, storageRoot, newDir string) erro
 	}
 
 	if newDir != "" {
-		fmt.Printf("Bucket '%s' storage moved to: %s/ (custom)\n", name, newPath)
+		pterm.Success.Printfln("Bucket '%s' storage moved to: %s/ (custom)", name, newPath)
 	} else {
-		fmt.Printf("Bucket '%s' storage moved back to default: %s/\n", name, newPath)
+		pterm.Success.Printfln("Bucket '%s' storage moved back to default: %s/", name, newPath)
 	}
 	if movedCount > 0 {
-		fmt.Printf("Moved %d items.\n", movedCount)
+		pterm.Info.Printfln("Moved %d items.", movedCount)
 	}
-	fmt.Println("Note: Restart the server for changes to take effect.")
+	pterm.Warning.Println("Restart the server for changes to take effect.")
 	return nil
 }
 
@@ -212,29 +213,38 @@ func RunBucketInfo(database *db.DB, name, storageRoot string) error {
 		return fmt.Errorf("get usage: %w", err)
 	}
 
-	fmt.Printf("Bucket:      %s\n", bucket.Name)
-	fmt.Printf("ID:          %d\n", bucket.ID)
-	fmt.Printf("Created:     %s\n", bucket.CreatedAt.Format("2006-01-02 15:04:05"))
+	storagePath := storageRoot + "/" + bucket.Name + "/"
+	storageLabel := storagePath
 	if bucket.StorageDir != "" {
-		fmt.Printf("Storage:     %s/%s/ (custom)\n", bucket.StorageDir, bucket.Name)
-	} else {
-		fmt.Printf("Storage:     %s/%s/\n", storageRoot, bucket.Name)
+		storagePath = bucket.StorageDir + "/" + bucket.Name + "/"
+		storageLabel = storagePath + " (custom)"
 	}
-	fmt.Printf("Objects:     %d\n", objCount)
-	fmt.Printf("Usage:       %s\n", formatBytes(usage))
+
+	quotaStr := pterm.Green("unlimited")
 	if bucket.QuotaBytes > 0 {
 		pct := float64(usage) / float64(bucket.QuotaBytes) * 100
-		fmt.Printf("Quota:       %s (%.1f%% used)\n", formatBytes(bucket.QuotaBytes), pct)
-	} else {
-		fmt.Printf("Quota:       unlimited\n")
+		quotaStr = fmt.Sprintf("%s (%.1f%% used)", formatBytes(bucket.QuotaBytes), pct)
 	}
-	fmt.Printf("Credentials: %d\n", len(creds))
+
+	pterm.DefaultSection.Println(bucket.Name)
+	bulletItems := []pterm.BulletListItem{
+		{Level: 0, Text: pterm.Gray("ID:          ") + fmt.Sprintf("%d", bucket.ID)},
+		{Level: 0, Text: pterm.Gray("Created:     ") + bucket.CreatedAt.Format("2006-01-02 15:04:05")},
+		{Level: 0, Text: pterm.Gray("Storage:     ") + storageLabel},
+		{Level: 0, Text: pterm.Gray("Objects:     ") + fmt.Sprintf("%d", objCount)},
+		{Level: 0, Text: pterm.Gray("Usage:       ") + formatBytes(usage)},
+		{Level: 0, Text: pterm.Gray("Quota:       ") + quotaStr},
+		{Level: 0, Text: pterm.Gray("Credentials: ") + fmt.Sprintf("%d", len(creds))},
+	}
+	pterm.DefaultBulletList.WithItems(bulletItems).Render()
 
 	if len(creds) > 0 {
-		fmt.Println("\nAccess Keys:")
+		pterm.Println()
+		tableData := pterm.TableData{{"ACCESS KEY", "PERMISSION", "CREATED"}}
 		for _, c := range creds {
-			fmt.Printf("  - %s [%s] (created: %s)\n", c.AccessKey, c.Permission, c.CreatedAt.Format("2006-01-02 15:04:05"))
+			tableData = append(tableData, []string{c.AccessKey, c.Permission, c.CreatedAt.Format("2006-01-02 15:04:05")})
 		}
+		pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
 	}
 
 	return nil
@@ -259,9 +269,9 @@ func RunBucketQuota(database *db.DB, name, sizeStr string) error {
 	}
 
 	if quotaBytes == 0 {
-		fmt.Printf("Quota removed for bucket '%s'.\n", name)
+		pterm.Success.Printfln("Quota removed for bucket '%s'.", name)
 	} else {
-		fmt.Printf("Quota set for bucket '%s': %s\n", name, formatBytes(quotaBytes))
+		pterm.Success.Printfln("Quota set for bucket '%s': %s", name, formatBytes(quotaBytes))
 	}
 	return nil
 }
@@ -294,11 +304,15 @@ func RunCredentialCreate(database *db.DB, bucketName string, readOnly bool) erro
 		return fmt.Errorf("create credential: %w", err)
 	}
 
-	fmt.Printf("Bucket:     %s\n", bucketName)
-	fmt.Printf("Access Key: %s\n", accessKey)
-	fmt.Printf("Secret Key: %s\n", secretKey)
-	fmt.Printf("Permission: %s\n", permission)
-	fmt.Printf("\nWarning: Save the secret key now. It will not be shown again.\n")
+	pterm.Success.Println("Credential created")
+	panel := pterm.DefaultBox.WithTitle("Credentials").Sprint(
+		pterm.Gray("Bucket:     ") + bucketName + "\n" +
+			pterm.Gray("Access Key: ") + pterm.Cyan(accessKey) + "\n" +
+			pterm.Gray("Secret Key: ") + pterm.Cyan(secretKey) + "\n" +
+			pterm.Gray("Permission: ") + permission,
+	)
+	pterm.Println(panel)
+	pterm.Warning.Println("Save the secret key now. It will not be shown again.")
 
 	return nil
 }
@@ -318,16 +332,15 @@ func RunCredentialList(database *db.DB, bucketName string) error {
 	}
 
 	if len(creds) == 0 {
-		fmt.Printf("No credentials for bucket '%s'.\n", bucketName)
+		pterm.Warning.Printfln("No credentials for bucket '%s'.", bucketName)
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ACCESS KEY\tPERMISSION\tCREATED")
+	tableData := pterm.TableData{{"ACCESS KEY", "PERMISSION", "CREATED"}}
 	for _, c := range creds {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", c.AccessKey, c.Permission, c.CreatedAt.Format("2006-01-02 15:04:05"))
+		tableData = append(tableData, []string{c.AccessKey, c.Permission, c.CreatedAt.Format("2006-01-02 15:04:05")})
 	}
-	tw.Flush()
+	pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
 	return nil
 }
 
@@ -344,7 +357,7 @@ func RunCredentialDelete(database *db.DB, accessKey string) error {
 		return fmt.Errorf("delete credential: %w", err)
 	}
 
-	fmt.Printf("Credential '%s' deleted.\n", accessKey)
+	pterm.Success.Printfln("Credential '%s' deleted.", accessKey)
 	return nil
 }
 
@@ -361,7 +374,7 @@ func RunBucketVersioningEnable(database *db.DB, name string) error {
 	if err := database.SetBucketVersioning(name, "Enabled"); err != nil {
 		return fmt.Errorf("set versioning: %w", err)
 	}
-	fmt.Printf("Versioning enabled for bucket '%s'.\n", name)
+	pterm.Success.Printfln("Versioning enabled for bucket '%s'.", name)
 	return nil
 }
 
@@ -376,7 +389,7 @@ func RunBucketVersioningSuspend(database *db.DB, name string) error {
 	if err := database.SetBucketVersioning(name, "Suspended"); err != nil {
 		return fmt.Errorf("set versioning: %w", err)
 	}
-	fmt.Printf("Versioning suspended for bucket '%s'.\n", name)
+	pterm.Success.Printfln("Versioning suspended for bucket '%s'.", name)
 	return nil
 }
 
@@ -392,7 +405,7 @@ func RunBucketVersioningStatus(database *db.DB, name string) error {
 	if status == "" {
 		status = "Disabled"
 	}
-	fmt.Printf("Bucket '%s' versioning: %s\n", name, status)
+	pterm.Info.Printfln("Bucket '%s' versioning: %s", name, pterm.Cyan(status))
 	return nil
 }
 
@@ -413,9 +426,9 @@ func RunBucketLifecycleSet(database *db.DB, name, prefix string, days int) error
 		return fmt.Errorf("set lifecycle rule: %w", err)
 	}
 	if prefix == "" {
-		fmt.Printf("Lifecycle rule set for bucket '%s': expire after %d days (all objects).\n", name, days)
+		pterm.Success.Printfln("Lifecycle rule set for bucket '%s': expire after %d days (all objects).", name, days)
 	} else {
-		fmt.Printf("Lifecycle rule set for bucket '%s': prefix='%s', expire after %d days.\n", name, prefix, days)
+		pterm.Success.Printfln("Lifecycle rule set for bucket '%s': prefix='%s', expire after %d days.", name, prefix, days)
 	}
 	return nil
 }
@@ -433,19 +446,18 @@ func RunBucketLifecycleGet(database *db.DB, name string) error {
 		return fmt.Errorf("get lifecycle rules: %w", err)
 	}
 	if len(rules) == 0 {
-		fmt.Printf("No lifecycle rules for bucket '%s'.\n", name)
+		pterm.Warning.Printfln("No lifecycle rules for bucket '%s'.", name)
 		return nil
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "PREFIX\tEXPIRATION DAYS\tCREATED")
+	tableData := pterm.TableData{{"PREFIX", "EXPIRATION DAYS", "CREATED"}}
 	for _, r := range rules {
 		prefix := r.Prefix
 		if prefix == "" {
 			prefix = "(all)"
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%s\n", prefix, r.ExpirationDays, r.CreatedAt.Format("2006-01-02 15:04:05"))
+		tableData = append(tableData, []string{prefix, fmt.Sprintf("%d", r.ExpirationDays), r.CreatedAt.Format("2006-01-02 15:04:05")})
 	}
-	tw.Flush()
+	pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
 	return nil
 }
 
@@ -461,12 +473,12 @@ func RunBucketLifecycleDelete(database *db.DB, name, prefix string) error {
 		if err := database.DeleteLifecycleRuleByPrefix(name, prefix); err != nil {
 			return fmt.Errorf("delete lifecycle rule: %w", err)
 		}
-		fmt.Printf("Lifecycle rule with prefix '%s' deleted for bucket '%s'.\n", prefix, name)
+		pterm.Success.Printfln("Lifecycle rule with prefix '%s' deleted for bucket '%s'.", prefix, name)
 	} else {
 		if err := database.DeleteLifecycleRules(name); err != nil {
 			return fmt.Errorf("delete lifecycle rules: %w", err)
 		}
-		fmt.Printf("All lifecycle rules deleted for bucket '%s'.\n", name)
+		pterm.Success.Printfln("All lifecycle rules deleted for bucket '%s'.", name)
 	}
 	return nil
 }
@@ -488,11 +500,11 @@ func RunBucketWebhookAdd(database *db.DB, name, url, events, secret string) erro
 	if err != nil {
 		return fmt.Errorf("create webhook: %w", err)
 	}
-	fmt.Printf("Webhook created for bucket '%s' (id=%d).\n", name, hook.ID)
-	fmt.Printf("  URL:    %s\n", hook.URL)
-	fmt.Printf("  Events: %s\n", hook.EventTypes)
+	pterm.Success.Printfln("Webhook created for bucket '%s' (id=%d)", name, hook.ID)
+	pterm.Info.Printfln("URL:    %s", hook.URL)
+	pterm.Info.Printfln("Events: %s", hook.EventTypes)
 	if secret != "" {
-		fmt.Printf("  Secret: %s\n", secret)
+		pterm.Info.Printfln("Secret: %s", secret)
 	}
 	return nil
 }
@@ -510,15 +522,16 @@ func RunBucketWebhookList(database *db.DB, name string) error {
 		return fmt.Errorf("list webhooks: %w", err)
 	}
 	if len(hooks) == 0 {
-		fmt.Printf("No webhooks for bucket '%s'.\n", name)
+		pterm.Warning.Printfln("No webhooks for bucket '%s'.", name)
 		return nil
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tURL\tEVENTS\tACTIVE\tCREATED")
+	tableData := pterm.TableData{{"ID", "URL", "EVENTS", "ACTIVE", "CREATED"}}
 	for _, h := range hooks {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%v\t%s\n", h.ID, h.URL, h.EventTypes, h.Active, h.CreatedAt.Format("2006-01-02 15:04:05"))
+		tableData = append(tableData, []string{
+			fmt.Sprintf("%d", h.ID), h.URL, h.EventTypes, fmt.Sprintf("%v", h.Active), h.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
 	}
-	tw.Flush()
+	pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
 	return nil
 }
 
@@ -533,7 +546,7 @@ func RunBucketWebhookDelete(database *db.DB, name string, id int64) error {
 	if err := database.DeleteWebhook(id); err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
-	fmt.Printf("Webhook %d deleted for bucket '%s'.\n", id, name)
+	pterm.Success.Printfln("Webhook %d deleted for bucket '%s'.", id, name)
 	return nil
 }
 
@@ -635,11 +648,14 @@ func RunAdminCreate(database *db.DB, username, customPassword string) error {
 		return fmt.Errorf("create admin: %w", err)
 	}
 
-	fmt.Printf("Admin user created.\n")
-	fmt.Printf("Username: %s\n", username)
-	fmt.Printf("Password: %s\n", password)
+	pterm.Success.Println("Admin user created")
+	panel := pterm.DefaultBox.WithTitle("Admin Credentials").Sprint(
+		pterm.Gray("Username: ") + pterm.Cyan(username) + "\n" +
+			pterm.Gray("Password: ") + pterm.Cyan(password),
+	)
+	pterm.Println(panel)
 	if customPassword == "" {
-		fmt.Printf("\nWarning: Save the password now. It will not be shown again.\n")
+		pterm.Warning.Println("Save the password now. It will not be shown again.")
 	}
 	return nil
 }
@@ -651,16 +667,17 @@ func RunAdminList(database *db.DB) error {
 	}
 
 	if len(admins) == 0 {
-		fmt.Println("No admin users found.")
+		pterm.Warning.Println("No admin users found.")
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tUSERNAME\tCREATED")
+	tableData := pterm.TableData{{"ID", "USERNAME", "CREATED"}}
 	for _, a := range admins {
-		fmt.Fprintf(tw, "%d\t%s\t%s\n", a.ID, a.Username, a.CreatedAt.Format("2006-01-02 15:04:05"))
+		tableData = append(tableData, []string{
+			fmt.Sprintf("%d", a.ID), a.Username, a.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
 	}
-	tw.Flush()
+	pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
 	return nil
 }
 
@@ -677,7 +694,7 @@ func RunAdminDelete(database *db.DB, username string) error {
 		return fmt.Errorf("delete admin: %w", err)
 	}
 
-	fmt.Printf("Admin '%s' deleted.\n", username)
+	pterm.Success.Printfln("Admin '%s' deleted.", username)
 	return nil
 }
 
@@ -707,10 +724,10 @@ func RunAdminPassword(database *db.DB, username, customPassword string) error {
 		return fmt.Errorf("update password: %w", err)
 	}
 
-	fmt.Printf("Password updated for '%s'.\n", username)
-	fmt.Printf("Password: %s\n", password)
+	pterm.Success.Printfln("Password updated for '%s'.", username)
+	pterm.Info.Printfln("Password: %s", pterm.Cyan(password))
 	if customPassword == "" {
-		fmt.Printf("\nWarning: Save the password now. It will not be shown again.\n")
+		pterm.Warning.Println("Save the password now. It will not be shown again.")
 	}
 	return nil
 }

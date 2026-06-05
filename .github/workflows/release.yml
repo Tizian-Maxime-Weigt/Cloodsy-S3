@@ -29,6 +29,11 @@ jobs:
 
       - name: Build all platforms
         env:
+          # Pure-Go stack (sqlite via modernc.org/sqlite) — cgo is never needed.
+          # Forcing it off makes EVERY target fully static, including the native
+          # linux/amd64 build, which otherwise links dynamically against the
+          # runner's glibc and fails to run on older glibc or musl systems.
+          CGO_ENABLED: 0
           VERSION: ${{ steps.version.outputs.VERSION }}
           COMMIT: ${{ github.sha }}
           BUILD_DATE: ${{ github.event.head_commit.timestamp }}

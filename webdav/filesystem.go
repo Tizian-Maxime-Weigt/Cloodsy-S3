@@ -130,6 +130,7 @@ func (f *davFS) RemoveAll(ctx context.Context, name string) error {
 	// A plain file?
 	if m, _ := f.db.GetObjectMeta(bucket.ID, key); m != nil {
 		f.deleteOne(bucket, key)
+		f.cleanupEmptyParents(bucket, key)
 		return nil
 	}
 
@@ -152,6 +153,8 @@ func (f *davFS) RemoveAll(ctx context.Context, name string) error {
 		}
 		marker = next
 	}
+	// The directory itself is gone — drop any parent that is now empty too.
+	f.cleanupEmptyParents(bucket, key)
 	return nil
 }
 
@@ -175,6 +178,7 @@ func (f *davFS) Rename(ctx context.Context, oldName, newName string) error {
 			return err
 		}
 		f.deleteOne(bucket, oldKey)
+		f.cleanupEmptyParents(bucket, oldKey)
 		return nil
 	}
 
@@ -197,6 +201,18 @@ func (f *davFS) Rename(ctx context.Context, oldName, newName string) error {
 		for i := range objs {
 			src := objs[i].Key
 			dst := newPrefix + strings.TrimPrefix(src, oldPrefix)
+			// Nested directory markers are DB-only (no storage object), so they
+			// must be moved by metadata alone — copyObject would fail on the
+			// missing storage file and leave the old marker (and thus an empty
+			// source folder) orphaned.
+			if strings.HasSuffix(src, "/") {
+				f.db.PutObjectMeta(&db.ObjectMeta{
+					BucketID: bucket.ID, Key: dst, Size: 0,
+					ContentType: "application/x-directory", LastModified: time.Now().UTC(), IsLatest: true,
+				})
+				f.db.DeleteObjectMeta(bucket.ID, src)
+				continue
+			}
 			if err := f.copyObject(bucket, src, dst, &objs[i]); err == nil {
 				f.deleteOne(bucket, src)
 			}
@@ -206,10 +222,49 @@ func (f *davFS) Rename(ctx context.Context, oldName, newName string) error {
 		}
 		marker = next
 	}
+	f.cleanupEmptyParents(bucket, oldKey)
 	return nil
 }
 
 // --- helpers ---
+
+// cleanupEmptyParents walks up from key removing any parent directory marker
+// that became empty after the delete/move. S3 has no real folders, so a folder
+// created via MKCOL persists as a marker key ("dir/") even after its last child
+// is gone; without this it would linger as an empty directory. Walks deepest
+// first and stops at the first ancestor that still has children.
+func (f *davFS) cleanupEmptyParents(bucket *db.Bucket, key string) {
+	for {
+		idx := strings.LastIndex(key, "/")
+		if idx < 0 {
+			return // reached the bucket root
+		}
+		key = key[:idx] // parent directory key, without the trailing slash
+		if key == "" {
+			return
+		}
+		prefix := key + "/"
+		// List one level under this prefix. The directory's own marker has key
+		// == prefix and must not count as a child.
+		objs, prefixes, _, _, err := f.db.ListObjectsMeta(bucket.ID, prefix, "", "/", 2)
+		if err != nil {
+			return
+		}
+		children := len(prefixes)
+		for i := range objs {
+			if objs[i].Key != prefix {
+				children++
+			}
+		}
+		if children > 0 {
+			return // still in use → this dir and every ancestor stays
+		}
+		// Empty: drop the marker if one exists, then keep walking up.
+		if m, _ := f.db.GetObjectMeta(bucket.ID, prefix); m != nil {
+			f.db.DeleteObjectMeta(bucket.ID, prefix)
+		}
+	}
+}
 
 func (f *davFS) dirFile(bucket *db.Bucket, key string) *dirFile {
 	name := "/"

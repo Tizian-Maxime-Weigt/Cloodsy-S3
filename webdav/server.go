@@ -37,7 +37,7 @@ func RunServer(database *db.DB, store storage.Backend, cfg *config.Config, logge
 
 	srv := &http.Server{
 		Addr:              cfg.WebDAV.Listen,
-		Handler:           basicAuth(database, handler),
+		Handler:           noCache(basicAuth(database, handler)),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -56,6 +56,22 @@ func RunServer(database *db.DB, store storage.Backend, cfg *config.Config, logge
 	}()
 
 	return srv
+}
+
+// noCache tells WebDAV clients to revalidate rather than serve from their local
+// cache. The server itself holds no cache — listings come live from the metadata
+// DB and content live from disk — but OS clients (the Windows WebClient
+// redirector, Finder, davfs2) cache aggressively, which is the usual cause of
+// "stale" directory listings. These headers don't disable client caching
+// entirely (that's not possible at the protocol level) but push clients to check
+// for changes far more often.
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func StopServer(srv *http.Server, logger *slog.Logger) {

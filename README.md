@@ -252,6 +252,8 @@ By default every request requires SigV4 or a presigned URL. Flagging a bucket **
 
 ### WebDAV Mounting
 
+> **⚠️ Experimental.** WebDAV is a young feature and behavior varies by client. Enable it only on buckets you control and accept the trade-offs below. It is **opt-in per bucket** and **off by default**; write operations require a **read-write** credential.
+
 Cloodsy S3 can expose buckets over WebDAV so they can be mounted as a network drive. WebDAV runs on its own port and is gated twice: a global master switch in config, and a **per-bucket opt-in** (every bucket is OFF by default).
 
 ```yaml
@@ -274,6 +276,8 @@ webdav:
 - **Linux/CLI:** `rclone`, `cadaver`, or `davfs2`
 
 Read-only credentials may browse and download but receive `403 Forbidden` on any write (PUT/DELETE/MKCOL/MOVE). Files written over WebDAV are real S3 objects and are visible through the S3 API as well. Folders are virtual key prefixes; locks are in-memory (non-persistent across restarts).
+
+**Caching / stale listings.** The server holds **no cache of its own** — directory listings are read live from the metadata DB and content live from disk on every request, and responses are sent with `Cache-Control: no-cache`. Any staleness you see comes from the **OS WebDAV client** (the Windows WebClient redirector, Finder, and davfs2 all cache directory listings and file attributes). If listings look out of date, refresh the client or tune its cache (e.g. Windows `FileAttributesLimitInBytes`, davfs2 `cache_size`/`dir_refresh`). Deleting the last file in a folder also removes the now-empty folder marker automatically.
 
 ### Webhook Notifications
 

@@ -34,7 +34,7 @@ func VerifySignature(r *http.Request, secretKey string, region string) error {
 		return fmt.Errorf("missing X-Amz-Date header")
 	}
 
-	reqTime, err := time.Parse("20060102T150405Z", amzDate)
+	reqTime, err := time.Parse(sigV4TimeFormat, amzDate)
 	if err != nil {
 		return fmt.Errorf("invalid X-Amz-Date format")
 	}
@@ -110,7 +110,10 @@ func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
 		}
 		// Collapse sequential whitespace into a single space per AWS SigV4 spec
 		val = multiSpaceRegex.ReplaceAllString(val, " ")
-		canonicalHeaders.WriteString(strings.ToLower(h) + ":" + val + "\n")
+		canonicalHeaders.WriteString(strings.ToLower(h))
+		canonicalHeaders.WriteString(":")
+		canonicalHeaders.WriteString(val)
+		canonicalHeaders.WriteString("\n")
 	}
 
 	signedHeadersStr := strings.Join(signedHeaders, ";")
@@ -193,10 +196,19 @@ func deriveSigningKey(secret, dateStamp, region, service string) []byte {
 
 // VerifyPresignedSignature verifies the signature of a presigned URL request.
 func VerifyPresignedSignature(r *http.Request, secretKey string, region string, auth *SigV4Auth) error {
-	amzDate := r.URL.Query().Get("X-Amz-Date")
+	if auth == nil {
+		return fmt.Errorf("missing presigned auth")
+	}
+
+	query := r.URL.Query()
+	reqTime, err := validatePresignedExpiry(query)
+	if err != nil {
+		return err
+	}
+	amzDate := query.Get("X-Amz-Date")
 
 	// Validate credential date matches X-Amz-Date
-	dateStamp := amzDate[:8]
+	dateStamp := reqTime.Format("20060102")
 	if auth.Date != dateStamp {
 		return fmt.Errorf("credential date does not match X-Amz-Date")
 	}
@@ -255,7 +267,10 @@ func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) str
 			}
 		}
 		val = multiSpaceRegex.ReplaceAllString(val, " ")
-		canonicalHeaders.WriteString(strings.ToLower(h) + ":" + val + "\n")
+		canonicalHeaders.WriteString(strings.ToLower(h))
+		canonicalHeaders.WriteString(":")
+		canonicalHeaders.WriteString(val)
+		canonicalHeaders.WriteString("\n")
 	}
 
 	signedHeadersStr := strings.Join(signedHeaders, ";")

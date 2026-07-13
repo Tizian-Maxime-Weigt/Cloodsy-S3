@@ -833,6 +833,14 @@ func RunAdminDelete(database *db.DB, username string) error {
 		return fmt.Errorf("admin '%s' not found", username)
 	}
 
+	count, err := database.CountAdmins()
+	if err != nil {
+		return fmt.Errorf("count admins: %w", err)
+	}
+	if count <= 1 {
+		return fmt.Errorf("cannot delete the last admin")
+	}
+
 	if err := database.DeleteAdmin(username); err != nil {
 		return fmt.Errorf("delete admin: %w", err)
 	}

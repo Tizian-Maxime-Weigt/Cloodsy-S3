@@ -207,10 +207,40 @@ func (d *DB) migrate() error {
 		PRIMARY KEY (upload_id, part_number),
 		FOREIGN KEY (upload_id) REFERENCES multipart_uploads(id) ON DELETE CASCADE
 	);
+
+	CREATE TABLE IF NOT EXISTS lifecycle_rules (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		bucket_name TEXT NOT NULL,
+		name TEXT NOT NULL DEFAULT '',
+		prefix TEXT NOT NULL DEFAULT '',
+		expiration_days INTEGER NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (bucket_name) REFERENCES buckets(name) ON DELETE CASCADE,
+		UNIQUE(bucket_name, prefix)
+	);
+
+	CREATE TABLE IF NOT EXISTS admin_credentials (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS bucket_webhooks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		bucket_name TEXT NOT NULL,
+		name TEXT NOT NULL DEFAULT '',
+		url TEXT NOT NULL,
+		event_types TEXT NOT NULL DEFAULT '*',
+		secret TEXT NOT NULL DEFAULT '',
+		active INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (bucket_name) REFERENCES buckets(name) ON DELETE CASCADE
+	);
 	`
 
 	if _, err := d.writer.Exec(schema); err != nil {
-		return err
+		return fmt.Errorf("create schema: %w", err)
 	}
 
 	// Add columns for existing databases (idempotent)
@@ -233,49 +263,23 @@ func (d *DB) migrate() error {
 		if err != nil {
 			// Ignore "duplicate column" errors which are expected for existing databases
 			errMsg := err.Error()
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") && !strings.Contains(errMsg, "no such table") {
+			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
 				return fmt.Errorf("migration failed: %s: %w", m, err)
 			}
 		}
 	}
 
-	// Create index for object listing performance (idempotent)
-	d.writer.Exec("CREATE INDEX IF NOT EXISTS idx_objects_bucket_key ON objects(bucket_id, key)")
-	d.writer.Exec("CREATE INDEX IF NOT EXISTS idx_objects_bucket_key_version ON objects(bucket_id, key, version_id)")
-	d.writer.Exec("CREATE INDEX IF NOT EXISTS idx_objects_bucket_latest ON objects(bucket_id, is_latest)")
-
-	// Lifecycle rules table
-	d.writer.Exec(`CREATE TABLE IF NOT EXISTS lifecycle_rules (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		bucket_name TEXT NOT NULL,
-		name TEXT NOT NULL DEFAULT '',
-		prefix TEXT NOT NULL DEFAULT '',
-		expiration_days INTEGER NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (bucket_name) REFERENCES buckets(name) ON DELETE CASCADE,
-		UNIQUE(bucket_name, prefix)
-	)`)
-
-	// Admin credentials table
-	d.writer.Exec(`CREATE TABLE IF NOT EXISTS admin_credentials (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		username TEXT UNIQUE NOT NULL,
-		password_hash TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`)
-
-	// Webhook notifications table
-	d.writer.Exec(`CREATE TABLE IF NOT EXISTS bucket_webhooks (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		bucket_name TEXT NOT NULL,
-		name TEXT NOT NULL DEFAULT '',
-		url TEXT NOT NULL,
-		event_types TEXT NOT NULL DEFAULT '*',
-		secret TEXT NOT NULL DEFAULT '',
-		active INTEGER NOT NULL DEFAULT 1,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (bucket_name) REFERENCES buckets(name) ON DELETE CASCADE
-	)`)
+	// Create indexes for object listing performance (idempotent)
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_objects_bucket_key ON objects(bucket_id, key)",
+		"CREATE INDEX IF NOT EXISTS idx_objects_bucket_key_version ON objects(bucket_id, key, version_id)",
+		"CREATE INDEX IF NOT EXISTS idx_objects_bucket_latest ON objects(bucket_id, is_latest)",
+	}
+	for _, idx := range indexes {
+		if _, err := d.writer.Exec(idx); err != nil {
+			return fmt.Errorf("create index failed: %s: %w", idx, err)
+		}
+	}
 
 	return nil
 }

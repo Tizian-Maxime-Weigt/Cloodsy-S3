@@ -48,6 +48,38 @@ type SigV4Auth struct {
 	Credential    string
 }
 
+const (
+	sigV4TimeFormat            = "20060102T150405Z"
+	maxPresignedExpiresSeconds = 604800
+)
+
+func validatePresignedExpiry(q url.Values) (time.Time, error) {
+	amzDate := q.Get("X-Amz-Date")
+	if amzDate == "" {
+		return time.Time{}, fmt.Errorf("missing X-Amz-Date")
+	}
+
+	expiresStr := q.Get("X-Amz-Expires")
+	if expiresStr == "" {
+		return time.Time{}, fmt.Errorf("missing X-Amz-Expires")
+	}
+
+	expires, err := strconv.Atoi(expiresStr)
+	if err != nil || expires < 1 || expires > maxPresignedExpiresSeconds {
+		return time.Time{}, fmt.Errorf("invalid X-Amz-Expires: must be 1-%d seconds", maxPresignedExpiresSeconds)
+	}
+
+	reqTime, err := time.Parse(sigV4TimeFormat, amzDate)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid X-Amz-Date format")
+	}
+	if time.Since(reqTime) > time.Duration(expires)*time.Second {
+		return time.Time{}, fmt.Errorf("presigned URL has expired")
+	}
+
+	return reqTime, nil
+}
+
 func ParseAuthorizationHeader(header string) (*SigV4Auth, error) {
 	// AWS4-HMAC-SHA256 Credential=AKID/20230101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=abcdef
 	if !strings.HasPrefix(header, "AWS4-HMAC-SHA256 ") {
@@ -134,28 +166,8 @@ func ParsePresignedQuery(q url.Values) (*SigV4Auth, error) {
 		return nil, fmt.Errorf("missing X-Amz-SignedHeaders")
 	}
 
-	amzDate := q.Get("X-Amz-Date")
-	if amzDate == "" {
-		return nil, fmt.Errorf("missing X-Amz-Date")
-	}
-
-	expiresStr := q.Get("X-Amz-Expires")
-	if expiresStr == "" {
-		return nil, fmt.Errorf("missing X-Amz-Expires")
-	}
-
-	expires, err := strconv.Atoi(expiresStr)
-	if err != nil || expires < 1 || expires > 604800 {
-		return nil, fmt.Errorf("invalid X-Amz-Expires: must be 1-604800 seconds")
-	}
-
-	// Check if expired
-	reqTime, err := time.Parse("20060102T150405Z", amzDate)
-	if err != nil {
-		return nil, fmt.Errorf("invalid X-Amz-Date format")
-	}
-	if time.Since(reqTime) > time.Duration(expires)*time.Second {
-		return nil, fmt.Errorf("presigned URL has expired")
+	if _, err := validatePresignedExpiry(q); err != nil {
+		return nil, err
 	}
 
 	credParts := strings.Split(credential, "/")
